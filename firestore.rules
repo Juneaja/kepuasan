@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Surveys collection matches
+    match /surveys/{surveyId} {
+      allow read: if true;
+      allow create: if isValidSurvey(request.resource.data, surveyId);
+      allow delete: if true; // Permissions to clear/remove individual entries
+      allow update: if false; // Survey entries once committed are immutable
+    }
+
+    // Helper functions for secure validation
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-+]+$'); 
+    }
+
+    function isValidSurvey(data, surveyId) {
+      return isValidId(surveyId)
+        && data.keys().hasAll(['id', 'timestamp', 'ageRange', 'gender', 'kecamatan', 'ratings', 'feedback'])
+        && data.keys().size() <= 9
+        && data.id is string && data.id.size() <= 128
+        && data.timestamp is string && data.timestamp.size() <= 128
+        && data.ageRange is string && data.ageRange.size() <= 50
+        && data.gender is string && (data.gender == 'Laki-laki' || data.gender == 'Perempuan' || data.gender == 'Tidak Menyebutkan')
+        && data.kecamatan is string && data.kecamatan.size() <= 100
+        && data.feedback is string && data.feedback.size() <= 5000
+        && data.ratings is map
+        && data.ratings.pendaftaran is int && data.ratings.pendaftaran >= 1 && data.ratings.pendaftaran <= 5
+        && data.ratings.dokter is int && data.ratings.dokter >= 1 && data.ratings.dokter <= 5
+        && data.ratings.perawat is int && data.ratings.perawat >= 1 && data.ratings.perawat <= 5
+        && data.ratings.fasilitas is int && data.ratings.fasilitas >= 1 && data.ratings.fasilitas <= 5
+        && data.ratings.farmasi is int && data.ratings.farmasi >= 1 && data.ratings.farmasi <= 5
+        && data.ratings.waktuTunggu is int && data.ratings.waktuTunggu >= 1 && data.ratings.waktuTunggu <= 5;
+    }
+  }
+}

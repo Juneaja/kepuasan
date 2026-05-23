@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "survey": {
+      "title": "survey",
+      "description": "Survei kepuasan pelayanan pasien di Klinik Sartika Lamongan",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID unik untuk setiap respons survei"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu respons disubmit"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nama opsional pengisi survei"
+        },
+        "ageRange": {
+          "type": "string",
+          "description": "Kategori usia pengisi"
+        },
+        "gender": {
+          "type": "string",
+          "description": "Jenis kelamin pengisi"
+        },
+        "kecamatan": {
+          "type": "string",
+          "description": "Kecamatan domisili pengisi di Kabupaten Lamongan"
+        },
+        "ratings": {
+          "type": "object",
+          "description": "Kumpulan penilaian bintang berskala 1-5 untuk unit layanan"
+        },
+        "feedback": {
+          "type": "string",
+          "description": "Komentar teks tambahan dari pengisi"
+        },
+        "sentiment": {
+          "type": "string",
+          "description": "Label analisis sentimen numerik terhitung (positif, netral, negatif)"
+        }
+      },
+      "required": ["id", "timestamp", "ageRange", "gender", "kecamatan", "ratings", "feedback"]
+    }
+  },
+  "firestore": {
+    "/surveys/{surveyId}": {
+      "schema": "survey",
+      "description": "Menyimpan seluruh data responden berupa ulasan beralur IKM"
+    }
+  }
+}
