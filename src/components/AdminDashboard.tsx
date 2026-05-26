@@ -2,23 +2,140 @@ import React from 'react';
 import { 
   Building, UserCheck, Stethoscope, HeartHandshake, Building2, Pill, Clock, 
   Trash2, ShieldCheck, RefreshCw, Sparkles, LogOut, CheckCircle2, Search, Filter, AlertTriangle, ChevronRight, User,
-  FileDown
+  FileDown, Key, Lock, Image, Upload
 } from 'lucide-react';
-import { SurveyResponse } from '../types';
+import { SurveyResponse, BrandSettings } from '../types';
 import { CATEGORY_SPECS } from '../data';
 import { jsPDF } from 'jspdf';
+import { db } from '../firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 interface AdminDashboardProps {
   surveys: SurveyResponse[];
   onClearSurveys: () => void;
   onDeleteSurvey: (id: string) => void;
   onSeedData?: () => void;
+  brandSettings?: BrandSettings;
 }
 
-export default function AdminDashboard({ surveys, onClearSurveys, onDeleteSurvey, onSeedData }: AdminDashboardProps) {
+export default function AdminDashboard({ surveys, onClearSurveys, onDeleteSurvey, onSeedData, brandSettings }: AdminDashboardProps) {
   const [isAuthenticated, setIsAuthenticated] = React.useState(false);
   const [password, setPassword] = React.useState('');
   const [authError, setAuthError] = React.useState('');
+
+  // Password Management States
+  const [dbPassword, setDbPassword] = React.useState<string>('sartika123');
+  const [isChangingPassword, setIsChangingPassword] = React.useState(false);
+  const [newPassword, setNewPassword] = React.useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = React.useState('');
+  const [passwordChangeError, setPasswordChangeError] = React.useState('');
+  const [passwordChangeSuccess, setPasswordChangeSuccess] = React.useState('');
+
+  // Branding Management States
+  const [isChangingBranding, setIsChangingBranding] = React.useState(false);
+  const [logoBase64, setLogoBase64] = React.useState<string>('');
+  const [faviconBase64, setFaviconBase64] = React.useState<string>('');
+  const [brandingError, setBrandingError] = React.useState('');
+  const [brandingSuccess, setBrandingSuccess] = React.useState('');
+
+  // Synchronize branding state on load
+  React.useEffect(() => {
+    if (brandSettings) {
+      setLogoBase64(brandSettings.logo || '');
+      setFaviconBase64(brandSettings.favicon || '');
+    }
+  }, [brandSettings, isChangingBranding]);
+
+  // Handle uploaded local files conversion to Base64
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, target: 'logo' | 'favicon') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 512 * 1024) {
+      setBrandingError(`Ukuran berkas ${target === 'logo' ? 'Logo' : 'Favicon'} terlalu besar! Maksimal 512 KB.`);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64String = reader.result as string;
+      if (target === 'logo') {
+        setLogoBase64(base64String);
+      } else {
+        setFaviconBase64(base64String);
+      }
+      setBrandingError('');
+    };
+    reader.onerror = () => {
+      setBrandingError('Gagal membaca berkas gambar.');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Save changes to Firestore brand doc
+  const handleSaveBranding = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBrandingError('');
+    setBrandingSuccess('');
+
+    try {
+      const docRef = doc(db, 'settings', 'brand');
+      await setDoc(docRef, {
+        logo: logoBase64 || '',
+        favicon: faviconBase64 || ''
+      });
+      setBrandingSuccess('Logo dan Favicon berhasil diperbarui secara instan!');
+      setTimeout(() => {
+        setIsChangingBranding(false);
+        setBrandingSuccess('');
+      }, 1500);
+    } catch (err) {
+      console.error('Error saving branding:', err);
+      setBrandingError('Gagal menyimpan ke database. Periksa koneksi.');
+    }
+  };
+
+  // Reset custom branding to default live app visuals
+  const handleResetBranding = async () => {
+    if (window.confirm('Apakah Anda yakin ingin menyetel ulang logo dan favicon ke bawaan sistem?')) {
+      try {
+        const docRef = doc(db, 'settings', 'brand');
+        await setDoc(docRef, {
+          logo: '',
+          favicon: ''
+        });
+        setLogoBase64('');
+        setFaviconBase64('');
+        setBrandingSuccess('Visual branding berhasil dikembalikan ke bawaan!');
+        setTimeout(() => {
+          setIsChangingBranding(false);
+          setBrandingSuccess('');
+        }, 1500);
+      } catch (err) {
+        console.error('Error resetting branding:', err);
+        setBrandingError('Gagal menyetel ulang branding.');
+      }
+    }
+  };
+
+  // Fetch the current saved password from firestore settings doc
+  React.useEffect(() => {
+    const fetchAdminPassword = async () => {
+      try {
+        const docRef = doc(db, 'settings', 'admin_auth');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data && typeof data.password === 'string') {
+            setDbPassword(data.password);
+          }
+        }
+      } catch (err) {
+        console.error('Gagal mengambil sandi dari database:', err);
+      }
+    };
+    fetchAdminPassword();
+  }, []);
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -30,14 +147,51 @@ export default function AdminDashboard({ surveys, onClearSurveys, onDeleteSurvey
   const [isAiLoading, setIsAiLoading] = React.useState(false);
   const [aiLoadStep, setAiLoadStep] = React.useState(0);
 
-  // Authentication Handler
+  // Authentication Handler using the fetched dbPassword with a fallback of 'sartika123'
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === 'sartika123') {
+    if (password === dbPassword) {
       setIsAuthenticated(true);
       setAuthError('');
     } else {
       setAuthError('Sandi Klinik salah!');
+    }
+  };
+
+  // Password Update Handler
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordChangeError('');
+    setPasswordChangeSuccess('');
+
+    if (newPassword.trim().length < 4) {
+      setPasswordChangeError('Kata sandi baru minimal harus 4 karakter!');
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      setPasswordChangeError('Konfirmasi kata sandi baru tidak cocok!');
+      return;
+    }
+
+    try {
+      const docRef = doc(db, 'settings', 'admin_auth');
+      await setDoc(docRef, { password: newPassword }, { merge: true });
+      setDbPassword(newPassword);
+      setPasswordChangeSuccess('Kata sandi administrator berhasil diperbarui!');
+      
+      // Clear inputs
+      setNewPassword('');
+      setConfirmNewPassword('');
+      
+      // Auto-close dialog after 1.8 seconds
+      setTimeout(() => {
+        setIsChangingPassword(false);
+        setPasswordChangeSuccess('');
+      }, 1800);
+    } catch (err: any) {
+      console.error('Error saving updated password to firestore:', err);
+      setPasswordChangeError('Gagal menyimpan sandi ke database. Periksa koneksi.');
     }
   };
 
@@ -153,7 +307,7 @@ export default function AdminDashboard({ surveys, onClearSurveys, onDeleteSurvey
     }
   };
 
-  // High Fidelity PDF Generator using jsPDF
+  // High Fidelity PDF Generator using jsPDF - Ultra-Minimalist & Modern Swiss Design
   const handleDownloadPdf = () => {
     const doc = new jsPDF({
       orientation: 'portrait',
@@ -163,11 +317,11 @@ export default function AdminDashboard({ surveys, onClearSurveys, onDeleteSurvey
 
     let posY = 20;
 
-    // Helper to draw horizontal line
+    // Helper to draw horizontal line (Understated, extremely fine hair lines)
     const drawLine = (y: number, color: [number, number, number] = [226, 232, 240]) => {
       doc.setDrawColor(color[0], color[1], color[2]);
-      doc.setLineWidth(0.5);
-      doc.line(15, y, 195, y);
+      doc.setLineWidth(0.2);
+      doc.line(20, y, 190, y);
     };
 
     // Helper to clean markdown characters
@@ -180,361 +334,352 @@ export default function AdminDashboard({ surveys, onClearSurveys, onDeleteSurvey
         .trim();
     };
 
-    // --- PAGE 1 HEADER: KOP SURAT ---
-    // Deep Indigo Header Bar
-    doc.setFillColor(30, 27, 75); // Indigo-900
-    doc.rect(15, posY, 180, 26, 'F');
-
-    // Accent Line at the bottom of header bar
-    doc.setFillColor(16, 185, 129); // Emerald-500
-    doc.rect(15, posY + 25.4, 180, 0.6, 'F');
-
-    // Header Content
-    doc.setTextColor(255, 255, 255);
+    // --- PAGE 1 HEADER: MINIMALIST PROFESSIONAL LETTERHEAD ---
+    // Pure white backdrop with precise, balanced typography
+    doc.setTextColor(15, 23, 42); // slate-900 (Deep Charcoal)
     doc.setFont('Helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.text('KLINIK SARTIKA LAMONGAN', 22, posY + 10);
+    doc.setFontSize(13);
+    doc.text('KLINIK SARTIKA LAMONGAN', 20, posY + 4);
     
     doc.setFont('Helvetica', 'normal');
-    doc.setFontSize(8.5);
-    doc.setTextColor(167, 139, 250); // violet-400
-    doc.text('LAPORAN RESMI EVALUASI & SURVEY KEPUASAN PELAYANAN (IKM)', 22, posY + 17);
-
-    // Date metadata Print (Right-aligned inside header)
-    doc.setTextColor(224, 242, 254);
-    doc.setFontSize(7.5);
-    const currentDateStr = new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    doc.text(`Dicetak: ${currentDateStr}`, 190, posY + 10, { align: 'right' });
-
-    posY += 34;
-
-    // --- SECTION 1: RINGKASAN METRIK UTAMA (BENTO GRID STYLE) ---
-    doc.setTextColor(30, 27, 75);
-    doc.setFont('Helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.text('I. RINGKASAN METRIK UTAMA', 15, posY);
-    posY += 4;
-    drawLine(posY, [79, 70, 229]); // Indigo-600
-    posY += 6;
-
-    // Draw 3 Bento Box Grid Cards
-    const boxY = posY;
-    const boxHeight = 28;
-    const boxWidth = 56;
-    const boxGap = 6;
-
-    // Bento 1: IKM VALUE
-    doc.setFillColor(248, 250, 252); // slate-50
-    doc.setDrawColor(226, 232, 240); // slate-200
-    doc.setLineWidth(0.3);
-    doc.rect(15, boxY, boxWidth, boxHeight, 'DF');
-    doc.setFont('Helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(100, 116, 139);
-    doc.text('INDEKS KEPUASAN (IKM)', 19, boxY + 6);
-    doc.setFontSize(16);
-    doc.setTextColor(30, 27, 75);
-    doc.text(`${ikmValue}`, 19, boxY + 15);
     doc.setFontSize(8);
-    doc.setTextColor(79, 70, 229);
-    doc.text(`/ 100.0 (${qualitative.label})`, 19, boxY + 22);
+    doc.setTextColor(100, 116, 139); // slate-500 (Muted Steel Slate)
+    doc.text('LAPORAN EVALUASI & SURVEI KEPUASAN PELAYANAN (INDEKS IKM)', 20, posY + 10);
 
-    // Bento 2: RATING BINTANG
-    doc.setFillColor(248, 250, 252);
-    doc.rect(15 + boxWidth + boxGap, boxY, boxWidth, boxHeight, 'DF');
-    doc.setFont('Helvetica', 'bold');
+    // Document Meta (Right-aligned details block)
+    doc.setFont('Helvetica', 'normal');
     doc.setFontSize(7.5);
-    doc.setTextColor(100, 116, 139);
-    doc.text('RATA-RATA BINTANG', 15 + boxWidth + boxGap + 4, boxY + 6);
-    doc.setFontSize(16);
-    doc.setTextColor(30, 27, 75);
-    doc.text(`${overallRating} / 5.00`, 15 + boxWidth + boxGap + 4, boxY + 15);
-    doc.setFontSize(8);
-    doc.setTextColor(51, 65, 85);
-    doc.text(`Sampel: ${totalSurveys} Responden`, 15 + boxWidth + boxGap + 4, boxY + 22);
+    doc.setTextColor(148, 163, 184); // slate-400
+    const currentDateStr = new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
+    doc.text(`Periode Laporan : Real-Time`, 190, posY + 4, { align: 'right' });
+    doc.text(`Tanggal Cetak  : ${currentDateStr}`, 190, posY + 9, { align: 'right' });
 
-    // Bento 3: OPINI SENTIMEN
-    doc.setFillColor(248, 250, 252);
-    doc.rect(15 + (boxWidth * 2) + (boxGap * 2), boxY, boxWidth, boxHeight, 'DF');
-    doc.setFont('Helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(100, 116, 139);
-    doc.text('KECENDERUNGAN SENTIMEN', 15 + (boxWidth * 2) + (boxGap * 2) + 4, boxY + 6);
-    doc.setFontSize(8);
-    doc.setTextColor(16, 185, 129); // Positif Green
-    doc.text(`Positif: ${sentimentCounts.positif} ulasan`, 15 + (boxWidth * 2) + (boxGap * 2) + 4, boxY + 12);
-    doc.setTextColor(217, 119, 6); // Netral Orange
-    doc.text(`Netral: ${sentimentCounts.netral} ulasan`, 15 + (boxWidth * 2) + (boxGap * 2) + 4, boxY + 18);
-    doc.setTextColor(225, 29, 72); // Negatif Rose
-    doc.text(`Negatif: ${sentimentCounts.negatif} ulasan`, 15 + (boxWidth * 2) + (boxGap * 2) + 4, boxY + 24);
+    posY += 16;
+    drawLine(posY, [226, 232, 240]); // soft separator
+    posY += 12;
 
-    posY += boxHeight + 12;
-
-    // --- SECTION 2: SKOR DETAIL PER SEKTOR (PRECISION GRAPHICS) ---
-    doc.setTextColor(30, 27, 75);
-    doc.setFont('Helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.text('II. VALUE INDEKS PER SEKTOR LAYANAN', 15, posY);
-    posY += 4;
-    drawLine(posY, [79, 70, 229]);
-    posY += 8;
-
-    CATEGORY_SPECS.forEach((spec) => {
-      const score = averages[spec.key];
-      
-      // Sektor Name
-      doc.setFont('Helvetica', 'bold');
-      doc.setFontSize(8.5);
-      doc.setTextColor(51, 65, 85);
-      doc.text(spec.title.toUpperCase(), 15, posY + 3);
-
-      // Score Text
-      doc.setFont('Helvetica', 'bold');
-      doc.setFontSize(9);
-      doc.setTextColor(30, 27, 75);
-      doc.text(`${score.toFixed(2)} / 5.00`, 75, posY + 3);
-
-      // Progress bar background sleeve
-      doc.setFillColor(241, 245, 249); // slate-100
-      doc.rect(112, posY, 83, 3.5, 'F');
-      
-      // Colored Progress bar fill representation
-      const percentage = (score / 5);
-      const fillWidth = percentage * 83;
-      if (score >= 4.2) {
-        doc.setFillColor(16, 185, 129); // emerald-500
-      } else if (score >= 3.0) {
-        doc.setFillColor(79, 70, 229); // indigo-600
-      } else {
-        doc.setFillColor(239, 68, 68); // red-500
-      }
-      doc.rect(112, posY, fillWidth, 3.5, 'F');
-
-      posY += 7.2;
-    });
-
-    posY += 8;
-
-    // --- SECTION 3: DISTRIBUSI WILAYAH DOMISILI (GRID ALIGNMENT) ---
-    if (posY > 235) { doc.addPage(); posY = 20; }
-    doc.setTextColor(30, 27, 75);
-    doc.setFont('Helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.text('III. DISTRIBUSI WILAYAH DOMISILI', 15, posY);
-    posY += 4;
-    drawLine(posY, [79, 70, 229]);
-    posY += 8;
-
-    const subdistList = subdistrictsWithData.filter(sub => sub.trim().length > 0);
-    if (subdistList.length === 0) {
-      doc.setFont('Helvetica', 'italic');
-      doc.setFontSize(8.5);
-      doc.setTextColor(148, 163, 184);
-      doc.text('Tidak ada data penandaan wilayah.', 15, posY);
-      posY += 6;
+    if (totalSurveys === 0) {
+      // Empty State Design
+      doc.setFont('Helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text('Belum tersedia data respons survei dalam database untuk dicetak.', 20, posY);
     } else {
-      let isCol2 = false;
-      let startY = posY;
-      doc.setFontSize(8.5);
-
-      subdistList.forEach((subdist, idx) => {
-        const count = surveys.filter(s => s.kecamatan === subdist).length;
-        const percent = ((count / totalSurveys) * 100).toFixed(0);
-        
-        const colX = isCol2 ? 110 : 15;
-        const curY = isCol2 ? startY + (Math.floor(idx / 2) * 6.5) : posY;
-
-        if (curY > 265) {
-          doc.addPage();
-          posY = 20;
-          startY = 20;
-        }
-
-        // Title and Value aligned perfectly
-        doc.setFont('Helvetica', 'bold');
-        doc.setTextColor(71, 85, 105);
-        doc.text(`KEC. ${subdist.toUpperCase()}`, colX, curY);
-
-        doc.setFont('Helvetica', 'bold');
-        doc.setTextColor(15, 23, 42);
-        doc.text(`${count} Responden (${percent}%)`, colX + 50, curY);
-
-        if (!isCol2) {
-          posY += 6.5;
-        }
-        isCol2 = !isCol2;
-      });
-
-      if (isCol2) {
-        posY += 6.5;
-      }
-    }
-
-    posY += 8;
-
-    // --- SECTION 4: TINJAUAN MUTU OLEH SARTIKA AI (ELEGANT BULLETS & TEXT WRAPPING) ---
-    if (aiAnalysis) {
-      if (posY > 230) { doc.addPage(); posY = 20; }
-      doc.setTextColor(30, 27, 75);
+      // --- SECTION 1: SAAS-STYLE TYPOGRAPHIC HERO STATS ---
+      // We display large numbers with tiny labels below
+      doc.setTextColor(15, 23, 42); // slate-900
+      
+      // Metric 1: IKM VALUE
       doc.setFont('Helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.text('IV. TINJAUAN MUTU STRATEGIS SARTIKA AI', 15, posY);
+      doc.setFontSize(26);
+      doc.text(`${ikmValue}`, 20, posY + 7);
+      
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text('INDEKS KEPUASAN (IKM)', 20, posY + 13);
+      
+      doc.setFont('Helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(16, 185, 129); // emerald-500
+      doc.text(`Mutu: ${qualitative.label}`, 20, posY + 18);
+
+      // Metric 2: RATING BINTANG
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(26);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${overallRating}`, 85, posY + 7);
+      
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text('RATA-RATA EVALUASI', 85, posY + 13);
+      
+      doc.setFont('Helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(79, 70, 229); // indigo-600
+      const positivePercent = totalSurveys > 0 ? Math.round((sentimentCounts.positif / totalSurveys) * 100) : 0;
+      doc.text(`${positivePercent}% Sentimen Positif`, 85, posY + 18);
+
+      // Metric 3: JUMLAH SAMPEL
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(26);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${totalSurveys}`, 150, posY + 7);
+      
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text('TOTAL RESPONDEN', 150, posY + 13);
+      
+      doc.setFont('Helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text('Sampel Pasien Aktif', 150, posY + 18);
+
+      posY += 26;
+      drawLine(posY, [241, 245, 249]); // lighter separator
+      posY += 10;
+
+      // --- SECTION 2: SKOR DETAIL PER SEKTOR (PRECISION INTERACTION SLIDERS) ---
+      doc.setTextColor(15, 23, 42);
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.text('I. METRIK NILAI PER SEKTOR LAYANAN', 20, posY);
       posY += 4;
-      drawLine(posY, [16, 185, 129]); // Emerald-500 Accent
+      drawLine(posY, [15, 23, 42]);
       posY += 8;
 
-      const lines = aiAnalysis.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const rawLine = lines[i].trim();
-        if (!rawLine) continue;
+      CATEGORY_SPECS.forEach((spec) => {
+        const score = averages[spec.key];
+        
+        // Sector Title (Left aligned)
+        doc.setFont('Helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(71, 85, 105); // slate-600
+        doc.text(spec.title.toUpperCase(), 20, posY + 2);
 
-        let level = 'normal';
-        let textToPrint = rawLine;
+        // Score (Aligned near progress bar start)
+        doc.setFont('Helvetica', 'bold');
+        doc.setFontSize(8.5);
+        doc.setTextColor(15, 23, 42);
+        doc.text(`${score.toFixed(2)} / 5.00`, 85, posY + 2);
 
-        if (rawLine.startsWith('### ')) {
-          level = 'h3';
-          textToPrint = '✦  ' + cleanMarkdown(rawLine.replace('### ', '')).toUpperCase();
-        } else if (rawLine.startsWith('## ')) {
-          level = 'h2';
-          textToPrint = '■  ' + cleanMarkdown(rawLine.replace('## ', '')).toUpperCase();
-        } else if (rawLine.startsWith('# ')) {
-          level = 'h1';
-          textToPrint = cleanMarkdown(rawLine.replace('# ', '')).toUpperCase();
-        } else if (rawLine.startsWith('- ') || rawLine.startsWith('* ')) {
-          level = 'bullet';
-          textToPrint = '•  ' + cleanMarkdown(rawLine.substring(2));
-        } else if (/^\d+\.\s/.test(rawLine)) {
-          level = 'numbered';
-          textToPrint = cleanMarkdown(rawLine);
-        } else {
-          textToPrint = cleanMarkdown(rawLine);
-        }
+        // Modern Ultra-Thin Progress Line representation on the right
+        doc.setFillColor(241, 245, 249); // slate-100 sleeve
+        doc.rect(125, posY + 0.8, 65, 0.8, 'F');
+        
+        const fillPercent = (score / 5);
+        const fillWidth = fillPercent * 65;
+        let pColor: [number, number, number] = [79, 70, 229]; // Indigo-600
+        if (score >= 4.2) pColor = [16, 185, 129]; // Positive Emerald
+        else if (score < 3.0) pColor = [225, 29, 72]; // Negative Rose
+        
+        doc.setFillColor(pColor[0], pColor[1], pColor[2]);
+        doc.rect(125, posY + 0.8, fillWidth, 0.8, 'F');
 
-        // Typography styling
-        if (level === 'h1' || level === 'h2') {
-          doc.setFont('Helvetica', 'bold');
-          doc.setFontSize(9.5);
-          doc.setTextColor(30, 27, 75);
-          posY += 3;
-        } else if (level === 'h3') {
-          doc.setFont('Helvetica', 'bold');
-          doc.setFontSize(9);
-          doc.setTextColor(16, 185, 129);
-          posY += 2;
-        } else {
+        posY += 6.5;
+      });
+
+      posY += 8;
+
+      // --- SECTION 3: DISTRIBUSI DOMISILI KECAMATAN (MINIMAL CARD FREE GRID) ---
+      if (posY > 235) { doc.addPage(); posY = 20; }
+      doc.setTextColor(15, 23, 42);
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.text('II. DISTRIBUSI WILAYAH DOMISILI RESPONDEN', 20, posY);
+      posY += 4;
+      drawLine(posY, [15, 23, 42]);
+      posY += 8;
+
+      const subdistList = subdistrictsWithData.filter(sub => sub.trim().length > 0);
+      if (subdistList.length === 0) {
+        doc.setFont('Helvetica', 'italic');
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184);
+        doc.text('Tidak ada catatan domisili responden.', 20, posY);
+        posY += 6;
+      } else {
+        doc.setFontSize(8);
+        let isRightCol = false;
+        let colStartY = posY;
+
+        subdistList.forEach((subdist, idx) => {
+          const count = surveys.filter(s => s.kecamatan === subdist).length;
+          const percent = ((count / totalSurveys) * 100).toFixed(0);
+          
+          const colX = isRightCol ? 110 : 20;
+          const curY = isRightCol ? colStartY + (Math.floor(idx / 2) * 6) : posY;
+
+          if (curY > 265) {
+            doc.addPage();
+            posY = 20;
+            colStartY = 20;
+          }
+
           doc.setFont('Helvetica', 'normal');
-          doc.setFontSize(8.5);
-          doc.setTextColor(51, 65, 85);
-        }
+          doc.setTextColor(100, 116, 139);
+          doc.text(`Kecamatan ${subdist.toUpperCase()}`, colX, curY);
 
-        // Core wrapping
-        const printableWidth = level === 'bullet' ? 175 : 180;
-        const wrappedLines = doc.splitTextToSize(textToPrint, printableWidth);
-        for (let j = 0; j < wrappedLines.length; j++) {
-          if (posY > 270) {
+          doc.setFont('Helvetica', 'bold');
+          doc.setTextColor(30, 41, 59);
+          doc.text(`${count} Responden (${percent}%)`, colX + 45, curY);
+
+          if (!isRightCol) {
+            posY += 6;
+          }
+          isRightCol = !isRightCol;
+        });
+
+        if (isRightCol) {
+          posY += 6;
+        }
+      }
+
+      posY += 8;
+
+      // --- SECTION 4: TINJAUAN STRATEGIS SARTIKA AI (ELEGANT EDITORIAL CARD) ---
+      if (aiAnalysis) {
+        if (posY > 230) { doc.addPage(); posY = 20; }
+        doc.setTextColor(15, 23, 42);
+        doc.setFont('Helvetica', 'bold');
+        doc.setFontSize(9.5);
+        doc.text('III. EVALUASI DAN REKOMENDASI KLINIS (SARTIKA AI)', 20, posY);
+        posY += 4;
+        drawLine(posY, [16, 185, 129]); // Emerald line representing AI insights
+        posY += 8;
+
+        // Custom minimal container/card block for AI analysis
+        const lines = aiAnalysis.split('\n');
+        doc.setFontSize(8);
+
+        for (let i = 0; i < lines.length; i++) {
+          const rawLine = lines[i].trim();
+          if (!rawLine) continue;
+
+          let blockType = 'normal';
+          let bodyText = rawLine;
+
+          if (rawLine.startsWith('### ')) {
+            blockType = 'h3';
+            bodyText = cleanMarkdown(rawLine.replace('### ', ''));
+          } else if (rawLine.startsWith('## ')) {
+            blockType = 'h2';
+            bodyText = cleanMarkdown(rawLine.replace('## ', ''));
+          } else if (rawLine.startsWith('# ')) {
+            blockType = 'h1';
+            bodyText = cleanMarkdown(rawLine.replace('# ', ''));
+          } else if (rawLine.startsWith('- ') || rawLine.startsWith('* ')) {
+            blockType = 'bullet';
+            bodyText = '• ' + cleanMarkdown(rawLine.substring(2));
+          } else if (/^\d+\.\s/.test(rawLine)) {
+            blockType = 'numbered';
+            bodyText = cleanMarkdown(rawLine);
+          } else {
+            bodyText = cleanMarkdown(rawLine);
+          }
+
+          // Modern minimal typography selection
+          if (blockType === 'h1' || blockType === 'h2') {
+            doc.setFont('Helvetica', 'bold');
+            doc.setFontSize(9);
+            doc.setTextColor(15, 23, 42);
+            posY += 2;
+          } else if (blockType === 'h3') {
+            doc.setFont('Helvetica', 'bold');
+            doc.setFontSize(8);
+            doc.setTextColor(16, 185, 129); // Modern clean emerald header accent
+            posY += 1.5;
+          } else {
+            doc.setFont('Helvetica', 'normal');
+            doc.setFontSize(8);
+            doc.setTextColor(71, 85, 105); // slate-600
+          }
+
+          const wrappedTextLines = doc.splitTextToSize(bodyText, 170);
+          for (let j = 0; j < wrappedTextLines.length; j++) {
+            if (posY > 270) {
+              doc.addPage();
+              posY = 20;
+            }
+            const indentX = blockType === 'bullet' ? 24 : 20;
+            doc.text(wrappedTextLines[j], indentX, posY);
+            posY += 4.5;
+          }
+          posY += 1.0;
+        }
+      }
+
+      posY += 8;
+
+      // --- SECTION 5: DAFTAR FEEDBACK DAN REKAPULASI PASIEN (EDITORIAL STYLE LISTING) ---
+      if (posY > 230) { doc.addPage(); posY = 20; }
+      doc.setTextColor(15, 23, 42);
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.text('IV. REKAPITULASI RESPONS DAN ULASAN PASIEN', 20, posY);
+      posY += 4;
+      drawLine(posY, [15, 23, 42]);
+      posY += 8;
+
+      const itemsToPrint = filteredSurveys.slice(0, 15);
+      if (itemsToPrint.length === 0) {
+        doc.setFont('Helvetica', 'italic');
+        doc.setFontSize(8.5);
+        doc.setTextColor(148, 163, 184);
+        doc.text('Tidak ada data saran ulasan yang memenuhi filter pencarian.', 20, posY);
+      } else {
+        itemsToPrint.forEach((survey) => {
+          const starsCalc = (Object.values(survey.ratings).reduce((a, b) => a + b, 0) / 6).toFixed(1);
+          const feedbackMsg = survey.feedback ? `"${survey.feedback}"` : '"Tidak menyertakan masukan tertulis tambahan."';
+          
+          const cleanCommentStr = cleanMarkdown(feedbackMsg);
+          const wrappedCommentLines = doc.splitTextToSize(cleanCommentStr, 163);
+
+          // Calculate height for spacing
+          const itemHeight = 10 + (wrappedCommentLines.length * 4.2) + 5;
+
+          if (posY + itemHeight > 270) {
             doc.addPage();
             posY = 20;
           }
-          const textX = level === 'bullet' ? 20 : 15;
-          doc.text(wrappedLines[j], textX, posY);
-          posY += 4.5;
-        }
 
-        posY += 1.2; // vertical gap
-      }
-    }
+          // Modern minimalist layout: No surrounding frame/background card. Only white space and elegant separating rule.
+          // Left-side indicator bar representing Sentiment rating (Thin elegant vertical bar on the extreme left margin)
+          let barFillColor: [number, number, number] = [100, 116, 139]; // default netral
+          if (survey.sentiment === 'positif') barFillColor = [16, 185, 129]; // emerald
+          else if (survey.sentiment === 'negatif') barFillColor = [225, 29, 72]; // rose
+          
+          doc.setFillColor(barFillColor[0], barFillColor[1], barFillColor[2]);
+          doc.rect(20, posY + 1, 0.6, itemHeight - 5, 'F'); // ultra-thin 0.6mm sentinel bar
 
-    posY += 8;
+          // Respondent basic metadata details
+          doc.setFont('Helvetica', 'bold');
+          doc.setFontSize(8);
+          doc.setTextColor(15, 23, 42);
+          const patientName = survey.name || 'ANONIM';
+          doc.text(patientName, 23, posY + 4.5);
 
-    // --- SECTION 5: DAFTAR MASUKAN & SARAN PASIEN (BEAUTIFULLY STYLED FEEDBACK CARDS) ---
-    if (posY > 230) { doc.addPage(); posY = 20; }
-    doc.setTextColor(30, 27, 75);
-    doc.setFont('Helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.text('V. REKAPITULASI RESPONS DAN SARAN PASIEN', 15, posY);
-    posY += 4;
-    drawLine(posY, [79, 70, 229]);
-    posY += 8;
+          doc.setFont('Helvetica', 'normal');
+          doc.setFontSize(7);
+          doc.setTextColor(148, 163, 184);
+          const patientSub = `Kec. ${survey.kecamatan}  |  Usia: ${survey.ageRange} Th  |  JK: ${survey.gender === 'Laki-laki' ? 'L' : 'P'}`;
+          doc.text(patientSub, 23 + doc.getTextWidth(patientName) + 3.5, posY + 4.5);
 
-    const printSurveys = filteredSurveys.slice(0, 15);
-    if (printSurveys.length === 0) {
-      doc.setFont('Helvetica', 'italic');
-      doc.setFontSize(9);
-      doc.setTextColor(148, 163, 184);
-      doc.text('Tidak ada ulasan pasien yang cocok dengan filter aktif.', 15, posY);
-    } else {
-      printSurveys.forEach((survey) => {
-        const starsAvg = (Object.values(survey.ratings).reduce((a, b) => a + b, 0) / 6).toFixed(1);
-        const commentsText = survey.feedback ? `"${survey.feedback}"` : '"Tidak memberi ulasan tertulis."';
-        
-        // Wrap feedback comment text inside card
-        const cleanComment = cleanMarkdown(commentsText);
-        const wrappedComment = doc.splitTextToSize(cleanComment, 168);
-        const cardHeight = 12 + (wrappedComment.length * 4.2) + 6; // text rows + info rows + card clearance
+          // Rating display
+          doc.setFont('Helvetica', 'bold');
+          doc.setFontSize(7.5);
+          doc.setTextColor(15, 23, 42);
+          doc.text(`SAMPEL: ${starsCalc} / 5.0 ★`, 190, posY + 4.5, { align: 'right' });
 
-        if (posY + cardHeight > 270) {
-          doc.addPage();
-          posY = 20;
-        }
+          // Fine detail ratings row
+          doc.setFont('Helvetica', 'normal');
+          doc.setFontSize(7);
+          doc.setTextColor(148, 163, 184);
+          const subScores = `Layanan: [ Dr: ${survey.ratings.dokter} | Pr: ${survey.ratings.perawat} | Dftr: ${survey.ratings.pendaftaran} | Fas: ${survey.ratings.fasilitas} | Aptk: ${survey.ratings.farmasi} | Tggu: ${survey.ratings.waktuTunggu} ]`;
+          doc.text(subScores, 23, posY + 8.2);
 
-        // Draw Card Surrounding Box with soft gray fill and light border
-        doc.setFillColor(248, 250, 252); // slate-100/50
-        doc.setDrawColor(226, 232, 240); // slate-200 border
-        doc.setLineWidth(0.35);
-        doc.rect(15, posY, 180, cardHeight, 'DF');
+          // Review comment paragraphs
+          doc.setFont('Helvetica', 'italic');
+          doc.setFontSize(8);
+          doc.setTextColor(71, 85, 105); // slate-600
 
-        // Draw Left vertical colored indicator bar representing Sentiment rating
-        // 'positif' -> emerald, 'negatif' -> rose-600, 'netral' -> indigo-600
-        let sentimentColor: [number, number, number] = [79, 70, 229]; // Indigo
-        if (survey.sentiment === 'positif') sentimentColor = [16, 185, 129];
-        else if (survey.sentiment === 'negatif') sentimentColor = [225, 29, 72];
-        doc.setFillColor(sentimentColor[0], sentimentColor[1], sentimentColor[2]);
-        doc.rect(15, posY, 1.8, cardHeight, 'F');
+          let commentYVal = posY + 13;
+          wrappedCommentLines.forEach((tLine: string) => {
+            doc.text(tLine, 23, commentYVal);
+            commentYVal += 4.2;
+          });
 
-        // Card Metadata Title block
-        doc.setFont('Helvetica', 'bold');
-        doc.setFontSize(8.5);
-        doc.setTextColor(15, 23, 42); // slate-900
-        const nameTag = survey.name || 'ANONIM';
-        doc.text(nameTag, 20, posY + 5.5);
+          posY += itemHeight;
 
-        doc.setFont('Helvetica', 'normal');
-        doc.setFontSize(7.5);
-        doc.setTextColor(100, 116, 139); // slate-500
-        const detailsTag = `Kec. ${survey.kecamatan}  |  Usia: ${survey.ageRange} Th  |  JK: ${survey.gender === 'Laki-laki' ? 'L' : 'P'}`;
-        doc.text(detailsTag, 20 + doc.getTextWidth(nameTag) + 4, posY + 5.5);
-
-        // Right-aligned Stars summary
-        doc.setFont('Helvetica', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(79, 70, 229); // Indigo
-        doc.text(`★ REKAP: ${starsAvg} / 5.0`, 190, posY + 5.5, { align: 'right' });
-
-        // Service snapshot subtext
-        doc.setFont('Helvetica', 'normal');
-        doc.setFontSize(7);
-        doc.setTextColor(100, 116, 139);
-        const ratingsSnapshot = `Pelayanan: [ Pendaftaran: ${survey.ratings.pendaftaran}★ | Dokter: ${survey.ratings.dokter}★ | Perawat: ${survey.ratings.perawat}★ | Fasilitas: ${survey.ratings.fasilitas}★ | Farmasi: ${survey.ratings.farmasi}★ | Tunggu: ${survey.ratings.waktuTunggu}★ ]`;
-        doc.text(ratingsSnapshot, 20, posY + 10);
-
-        // Thin separator inside card
-        doc.setDrawColor(241, 245, 249);
-        doc.setLineWidth(0.2);
-        doc.line(20, posY + 11.5, 190, posY + 11.5);
-
-        // Comment block printout
-        doc.setFont('Helvetica', 'italic');
-        doc.setFontSize(8);
-        doc.setTextColor(51, 65, 85);
-        
-        let commentLineY = posY + 15.5;
-        wrappedComment.forEach((line: string) => {
-          doc.text(line, 20, commentLineY);
-          commentLineY += 4.2;
+          // Understated thin separator between items
+          doc.setDrawColor(241, 245, 249);
+          doc.setLineWidth(0.15);
+          doc.line(23, posY - 1.5, 190, posY - 1.5);
+          posY += 2;
         });
-
-        posY += cardHeight + 4; // block container gap
-      });
+      }
     }
 
     // --- FOOTER STAMPING LOOP (PAGE X OF Y) ON EVERY PAGE ---
@@ -543,16 +688,16 @@ export default function AdminDashboard({ surveys, onClearSurveys, onDeleteSurvey
       doc.setPage(i);
       
       // Footer separating line
-      doc.setDrawColor(226, 232, 240); // slate-200
-      doc.setLineWidth(0.3);
-      doc.line(15, 282, 195, 282);
+      doc.setDrawColor(241, 245, 249); // ultra light slate
+      doc.setLineWidth(0.2);
+      doc.line(20, 280, 190, 280);
       
       // Footer text
       doc.setFont('Helvetica', 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor(100, 116, 139); // slate-500
-      doc.text('Laporan Resmi IKM • Klinik Sartika Lamongan', 15, 287);
-      doc.text(`Halaman ${i} dari ${totalPages}`, 195, 287, { align: 'right' });
+      doc.setFontSize(7);
+      doc.setTextColor(148, 163, 184); // slate-400
+      doc.text('Laporan Resmi Survei IKM • Klinik Sartika Lamongan', 20, 285);
+      doc.text(`Halaman ${i} dari ${totalPages}`, 190, 285, { align: 'right' });
     }
 
     // Save report PDF
@@ -609,6 +754,202 @@ export default function AdminDashboard({ surveys, onClearSurveys, onDeleteSurvey
   return (
     <div className="space-y-6" id="dashboard-admin-view">
       
+      {/* Change Password Modal Overlay */}
+      {isChangingPassword && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in" id="change-password-modal">
+          <div className="bg-white border-t-8 border-indigo-900 shadow-2xl p-6 sm:p-8 max-w-md w-full rounded-none">
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-150">
+              <Lock className="w-5 h-5 text-indigo-900 shrink-0" />
+              <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest font-mono">Ubah Kata Sandi Admin</h3>
+            </div>
+
+            <form onSubmit={handleUpdatePassword} className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black text-slate-600 mb-1.5 uppercase tracking-widest font-mono">
+                  Sandi Baru
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="MINIMAL 4 KARAKTER..."
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-none text-slate-900 text-sm focus:outline-hidden focus:border-indigo-900 font-mono tracking-widest text-center"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-slate-600 mb-1.5 uppercase tracking-widest font-mono">
+                  Konfirmasi Sandi Baru
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="ULANGI SANDI BARU..."
+                  value={confirmNewPassword}
+                  onChange={(e) => setConfirmNewPassword(e.target.value)}
+                  className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-none text-slate-900 text-sm focus:outline-hidden focus:border-indigo-900 font-mono tracking-widest text-center"
+                />
+              </div>
+
+              {passwordChangeError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-xs text-rose-700 font-bold uppercase tracking-wide flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{passwordChangeError}</span>
+                </div>
+              )}
+
+              {passwordChangeSuccess && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-bold uppercase tracking-wide flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{passwordChangeSuccess}</span>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2.5 pt-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsChangingPassword(false);
+                    setNewPassword('');
+                    setConfirmNewPassword('');
+                    setPasswordChangeError('');
+                    setPasswordChangeSuccess('');
+                  }}
+                  className="px-4 py-2.5 border-2 border-slate-200 hover:border-slate-400 text-slate-600 rounded-none text-xs font-black uppercase tracking-wider transition cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-indigo-900 hover:bg-slate-900 text-white rounded-none text-xs font-black uppercase tracking-wider transition cursor-pointer"
+                >
+                  Simpan Sandi Baru
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Change logo & favicon modal */}
+      {isChangingBranding && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in" id="change-branding-modal">
+          <div className="bg-white border-t-8 border-indigo-900 shadow-2xl p-6 sm:p-8 max-w-lg w-full rounded-none">
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-150">
+              <Image className="w-5 h-5 text-indigo-900 shrink-0" />
+              <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest font-mono">Ubah Logo & Favicon</h3>
+            </div>
+
+            <form onSubmit={handleSaveBranding} className="space-y-6">
+              
+              {/* Logo Section */}
+              <div className="space-y-2">
+                <label className="block text-[10px] font-black text-slate-600 uppercase tracking-widest font-mono">
+                  Logo Aplikasi (Maks 512 KB, Disarankan Persegi)
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-center p-3 border-2 border-dashed border-slate-200">
+                  <div className="col-span-1 flex flex-col items-center justify-center bg-slate-50 p-2 border border-slate-200 h-20 w-20 mx-auto">
+                    {logoBase64 ? (
+                      <img 
+                        src={logoBase64} 
+                        alt="Preview Logo" 
+                        className="max-h-16 max-w-16 object-contain animate-fade-in"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <span className="text-[10px] text-slate-400 text-center font-mono font-bold leading-tight">Default Logo</span>
+                    )}
+                  </div>
+                  <div className="col-span-3">
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      onChange={(e) => handleFileChange(e, 'logo')}
+                      className="text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:border-2 file:border-indigo-900 file:rounded-none file:text-xs file:font-black file:uppercase file:bg-transparent file:text-indigo-900 hover:file:bg-indigo-900 hover:file:text-white file:cursor-pointer transition w-full" 
+                    />
+                    <p className="text-[9px] text-slate-400 mt-1 font-mono">Format yang didukung: PNG, JPG, WEBP, atau SVG.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Favicon Section */}
+              <div className="space-y-2">
+                <label className="block text-[10px] font-black text-slate-600 uppercase tracking-widest font-mono">
+                  Favicon Browser (Maks 512 KB, Rasio 1:1)
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-center p-3 border-2 border-dashed border-slate-200">
+                  <div className="col-span-1 flex flex-col items-center justify-center bg-slate-50 p-2 border border-slate-200 h-16 w-16 mx-auto">
+                    {faviconBase64 ? (
+                      <img 
+                        src={faviconBase64} 
+                        alt="Preview Favicon" 
+                        className="h-8 w-8 object-contain animate-fade-in"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <span className="text-[10px] text-slate-400 text-center font-mono font-bold leading-tight">Default Icon</span>
+                    )}
+                  </div>
+                  <div className="col-span-3">
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      onChange={(e) => handleFileChange(e, 'favicon')}
+                      className="text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:border-2 file:border-indigo-900 file:rounded-none file:text-xs file:font-black file:uppercase file:bg-transparent file:text-indigo-900 hover:file:bg-indigo-900 hover:file:text-white file:cursor-pointer transition w-full" 
+                    />
+                    <p className="text-[9px] text-slate-400 mt-1 font-mono">Ikon kecil yang ditampilkan pada tab browser web Anda.</p>
+                  </div>
+                </div>
+              </div>
+
+              {brandingError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-xs text-rose-700 font-bold uppercase tracking-wide flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{brandingError}</span>
+                </div>
+              )}
+
+              {brandingSuccess && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-bold uppercase tracking-wide flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{brandingSuccess}</span>
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row justify-between gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={handleResetBranding}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-rose-100 hover:text-rose-700 text-slate-700 rounded-none text-xs font-black uppercase tracking-wider transition cursor-pointer text-center"
+                >
+                  Setel Ulang Default
+                </button>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsChangingBranding(false);
+                      setBrandingError('');
+                      setBrandingSuccess('');
+                    }}
+                    className="px-4 py-2.5 border-2 border-slate-200 hover:border-slate-400 text-slate-600 rounded-none text-xs font-black uppercase tracking-wider transition cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-indigo-900 hover:bg-slate-900 text-white rounded-none text-xs font-black uppercase tracking-wider transition cursor-pointer"
+                  >
+                    Simpan Branding
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Admin Quick Status Bar */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-indigo-900 text-white p-6 rounded-none border-b-4 border-emerald-500 gap-4 shadow-sm">
         <div>
@@ -619,6 +960,20 @@ export default function AdminDashboard({ surveys, onClearSurveys, onDeleteSurvey
         </div>
 
         <div className="flex items-center gap-2 flex-wrap self-stretch sm:self-auto justify-end">
+          <button
+            onClick={() => setIsChangingBranding(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-indigo-950 border-2 border-indigo-800 hover:border-emerald-500 text-indigo-200 hover:text-white rounded-none text-xs font-black uppercase tracking-wider transition cursor-pointer"
+          >
+            <Image className="w-3.5 h-3.5" />
+            <span>Logo & Favicon</span>
+          </button>
+          <button
+            onClick={() => setIsChangingPassword(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-indigo-950 border-2 border-indigo-800 hover:border-emerald-500 text-indigo-200 hover:text-white rounded-none text-xs font-black uppercase tracking-wider transition cursor-pointer"
+          >
+            <Key className="w-3.5 h-3.5" />
+            <span>Ubah Sandi</span>
+          </button>
           <button
             onClick={handleDownloadPdf}
             className="flex items-center gap-2 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 border-2 border-emerald-500 rounded-none text-xs font-black uppercase tracking-wider transition cursor-pointer"

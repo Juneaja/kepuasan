@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion } from 'motion/react';
 import { HeartPulse, ShieldAlert, Award, Sparkles, Star } from 'lucide-react';
-import { SurveyResponse } from './types';
+import { SurveyResponse, BrandSettings } from './types';
 import { INITIAL_SURVEYS } from './data';
 import ClinicHeader from './components/ClinicHeader';
 import SurveyWizard from './components/SurveyWizard';
@@ -12,6 +12,34 @@ import { collection, query, orderBy, onSnapshot, setDoc, doc, deleteDoc } from '
 export default function App() {
   const [isAdmin, setIsAdmin] = React.useState(false);
   const [surveys, setSurveys] = React.useState<SurveyResponse[]>([]);
+  const [brandSettings, setBrandSettings] = React.useState<BrandSettings>({});
+
+  // Synchronize Brand Settings (Logo and Favicon) from Firestore in real-time
+  React.useEffect(() => {
+    const unsubBrand = onSnapshot(doc(db, 'settings', 'brand'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data() as BrandSettings;
+        setBrandSettings(data);
+        
+        // Dynamic favicon update
+        if (data && data.favicon) {
+          let link: HTMLLinkElement | null = document.querySelector("link[rel~='icon']");
+          if (!link) {
+            link = document.createElement('link');
+            link.rel = 'icon';
+            document.getElementsByTagName('head')[0].appendChild(link);
+          }
+          link.href = data.favicon;
+        }
+      } else {
+        setBrandSettings({});
+      }
+    }, (error) => {
+      console.error('Error fetching brand settings:', error);
+    });
+
+    return () => unsubBrand();
+  }, []);
 
   // Synchronize state with Firebase Firestore in real-time
   React.useEffect(() => {
@@ -121,6 +149,7 @@ export default function App() {
         isAdmin={isAdmin} 
         setIsAdmin={setIsAdmin} 
         surveyCount={surveys.length} 
+        brandSettings={brandSettings}
       />
 
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
@@ -173,6 +202,7 @@ export default function App() {
             onClearSurveys={handleClearSurveys}
             onDeleteSurvey={handleDeleteSurvey}
             onSeedData={handleSeedData}
+            brandSettings={brandSettings}
           />
         )}
       </main>

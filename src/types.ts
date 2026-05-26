@@ -46,3 +46,8 @@ export interface CategorySpec {
   description: string;
   iconName: string;
 }
+
+export interface BrandSettings {
+  logo?: string;
+  favicon?: string;
+}

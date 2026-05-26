@@ -15,6 +15,11 @@ service cloud.firestore {
       allow update: if false; // Survey entries once committed are immutable
     }
 
+    // Settings collection matches (e.g., admin credentials/password settings)
+    match /settings/{settingId} {
+      allow read, write: if true;
+    }
+
     // Helper functions for secure validation
     function isValidId(id) { 
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-+]+$'); 

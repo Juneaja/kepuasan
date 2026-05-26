@@ -1,13 +1,15 @@
 import React from 'react';
 import { HeartPulse, LayoutDashboard, FileSpreadsheet, MapPin, Clock } from 'lucide-react';
+import { BrandSettings } from '../types';
 
 interface ClinicHeaderProps {
   isAdmin: boolean;
   setIsAdmin: (isAdmin: boolean) => void;
   surveyCount: number;
+  brandSettings?: BrandSettings;
 }
 
-export default function ClinicHeader({ isAdmin, setIsAdmin, surveyCount }: ClinicHeaderProps) {
+export default function ClinicHeader({ isAdmin, setIsAdmin, surveyCount, brandSettings }: ClinicHeaderProps) {
   const [timeStr, setTimeStr] = React.useState('');
 
   React.useEffect(() => {
@@ -27,10 +29,19 @@ export default function ClinicHeader({ isAdmin, setIsAdmin, surveyCount }: Clini
           
           {/* Brand Logo & Name */}
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center shadow-md">
-              <div className="w-8 h-8 border-4 border-indigo-900 rounded-full flex items-center justify-center animate-pulse">
-                <div className="w-3.5 h-3.5 bg-indigo-900 rounded-xs"></div>
-              </div>
+            <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center shadow-md overflow-hidden">
+              {brandSettings?.logo ? (
+                <img 
+                  src={brandSettings.logo} 
+                  alt="Klinik Logo" 
+                  className="w-10 h-10 object-contain"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div className="w-8 h-8 border-4 border-indigo-900 rounded-full flex items-center justify-center animate-pulse">
+                  <div className="w-3.5 h-3.5 bg-indigo-900 rounded-xs"></div>
+                </div>
+              )}
             </div>
             <div>
               <h1 className="font-display font-black text-2xl uppercase tracking-tight text-white m-0 leading-none">
