@@ -956,7 +956,7 @@ export default function AdminDashboard({ surveys, onClearSurveys, onDeleteSurvey
           <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 bg-indigo-950 border border-indigo-800 px-3 py-1 font-mono rounded-none">
             MODE ADMINISTRASI: AKTIF
           </span>
-          <h2 className="text-xl font-display font-black text-white m-0 uppercase tracking-tight mt-2.5">E-KEPUASAN ANALYTICAL TERMINAL</h2>
+          <h2 className="text-xl font-display font-black text-white m-0 uppercase tracking-tight mt-2.5">E-KEPUASAN KLINIK SARTIKA</h2>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap self-stretch sm:self-auto justify-end">
